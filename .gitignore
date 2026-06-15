@@ -1,0 +1,33 @@
+# Directorio de plugins y cache de Terraform
+.terraform/
+.terraform.lock.hcl
+
+# Archivos de estado (contienen IPs, IDs, passwords en texto plano)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variables con valores sensibles
+*.tfvars.local
+secrets.tfvars
+
+# Overrides de Terraform
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Plan binario
+*.tfplan
+
+# Credenciales AWS locales
+.aws/
+credentials
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
