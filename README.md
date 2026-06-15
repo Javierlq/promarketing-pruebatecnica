@@ -6,8 +6,6 @@ Infraestructura AWS para una operación de Casino Online, diseñada y aprovision
 
 ## Arquitectura
 
-![Diagrama de Arquitectura](diagrama/Arquitectura-AWS-Promarketing-Casino-Online-Arquitectura%20L%C3%B3gica.jpg)
-
 [Ver diagrama interactivo en draw.io](https://drive.google.com/file/d/1ZCdB5hC2ayMMV3HYqD-n2qS_Ae6BqvyX/view?usp=sharing)
 
 ---
