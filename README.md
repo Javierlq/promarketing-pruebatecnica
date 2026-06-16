@@ -4,9 +4,7 @@ Infraestructura AWS para una operación de Casino Online, diseñada y aprovision
 
 ---
 
-## Arquitectura
 
-[Ver diagrama interactivo en draw.io](https://drive.google.com/file/d/1ZCdB5hC2ayMMV3HYqD-n2qS_Ae6BqvyX/view?usp=sharing)
 
 ---
 
@@ -57,7 +55,6 @@ terraform apply
 terraform destroy
 ```
 
-> **Nota:** El certificado ACM requiere validación DNS manual antes de que el ALB quede operativo. Los outputs del `terraform apply` entregan los registros CNAME necesarios para la validación.
 
 ---
 
