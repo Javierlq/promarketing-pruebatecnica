@@ -1,7 +1,3 @@
-# variables.tf
-# Todas las variables de entrada del proyecto, con tipo, descripcion y valor
-# por defecto. Cambiar valores aqui (o en terraform.tfvars) reconfigura todo.
-
 # ----------------------------- Region / nombres -----------------------------
 
 variable "region" {
@@ -35,9 +31,14 @@ variable "num" {
 }
 
 variable "azs" {
-  description = "Zonas de disponibilidad a usar (minimo 2 para alta disponibilidad)."
+  description = "Zonas de disponibilidad a usar (minimo 3 para Redshift Serverless y alta disponibilidad)."
   type        = list(string)
-  default     = ["ca-central-1a", "ca-central-1b"]
+  default     = ["ca-central-1a", "ca-central-1b", "ca-central-1d"]
+
+  validation {
+    condition     = length(var.azs) >= 3
+    error_message = "Se requieren al menos 3 AZs (Redshift Serverless exige subredes en 3 AZs)."
+  }
 }
 
 # --------------------------------- Redes ------------------------------------
@@ -46,50 +47,68 @@ variable "vpc_principal_cidr" {
   description = "CIDR de la VPC principal (apps, frontend, APIs)."
   type        = string
   default     = "10.0.0.0/16"
+
+  validation {
+    condition     = can(cidrnetmask(var.vpc_principal_cidr))
+    error_message = "vpc_principal_cidr debe ser un CIDR IPv4 valido."
+  }
 }
 
 variable "vpc_data_cidr" {
   description = "CIDR de la VPC secundaria (bodega de datos historica). No debe solapar con la principal."
   type        = string
   default     = "10.1.0.0/16"
+
+  validation {
+    condition     = can(cidrnetmask(var.vpc_data_cidr))
+    error_message = "vpc_data_cidr debe ser un CIDR IPv4 valido."
+  }
 }
 
 variable "public_subnets_principal" {
   description = "CIDRs de las subredes publicas de la VPC principal (una por AZ)."
   type        = list(string)
-  default     = ["10.0.0.0/24", "10.0.1.0/24"]
+  default     = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+
+  validation {
+    condition     = alltrue([for c in var.public_subnets_principal : can(cidrnetmask(c))])
+    error_message = "Todos los CIDRs de public_subnets_principal deben ser validos."
+  }
 }
 
 variable "private_subnets_principal" {
   description = "CIDRs de las subredes privadas de la VPC principal (una por AZ)."
   type        = list(string)
-  default     = ["10.0.10.0/24", "10.0.11.0/24"]
+  default     = ["10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"]
+
+  validation {
+    condition     = alltrue([for c in var.private_subnets_principal : can(cidrnetmask(c))])
+    error_message = "Todos los CIDRs de private_subnets_principal deben ser validos."
+  }
 }
 
 variable "private_subnets_data" {
   description = "CIDRs de las subredes privadas de la VPC de datos (una por AZ)."
   type        = list(string)
-  default     = ["10.1.10.0/24", "10.1.11.0/24"]
+  default     = ["10.1.10.0/24", "10.1.11.0/24", "10.1.12.0/24"]
+
+  validation {
+    condition     = alltrue([for c in var.private_subnets_data : can(cidrnetmask(c))])
+    error_message = "Todos los CIDRs de private_subnets_data deben ser validos."
+  }
 }
 
 # -------------------------------- Computo -----------------------------------
-
-variable "apps" {
-  description = "Lista de microservicios/aplicaciones que corren en EC2."
-  type        = list(string)
-  default     = ["frontsite", "backoffice", "webapi", "gameapi"]
-}
 
 variable "ec2_instance_type" {
   description = "Tipo de instancia EC2 para las aplicaciones."
   type        = string
   default     = "t3.micro"
-}
 
-variable "app_port" {
-  description = "Puerto en el que escuchan las aplicaciones en las EC2."
-  type        = number
-  default     = 80
+  validation {
+    condition     = length(trimspace(var.ec2_instance_type)) > 0
+    error_message = "ec2_instance_type no puede estar vacio."
+  }
 }
 
 # ----------------------------- Bases de datos -------------------------------
@@ -98,6 +117,11 @@ variable "rds_instance_class" {
   description = "Clase de instancia para la RDS transaccional."
   type        = string
   default     = "db.t3.micro"
+
+  validation {
+    condition     = length(trimspace(var.rds_instance_class)) > 0
+    error_message = "rds_instance_class no puede estar vacio."
+  }
 }
 
 variable "rds_engine" {
@@ -118,17 +142,15 @@ variable "db_username" {
   default     = "casino_admin"
 }
 
-variable "db_password" {
-  description = "Contrasena de las bases de datos. Pasar via TF_VAR_db_password o tfvars; NUNCA versionar en Git."
-  type        = string
-  sensitive   = true
-  default     = "ChangeMe2026Secure"
-}
+variable "redshift_base_capacity" {
+  description = "Capacidad base (RPU) del workgroup de Redshift Serverless."
+  type        = number
+  default     = 8
 
-variable "redshift_node_type" {
-  description = "Tipo de nodo para el cluster Redshift (bodega de datos)."
-  type        = string
-  default     = "dc2.large"
+  validation {
+    condition     = var.redshift_base_capacity >= 8
+    error_message = "La capacidad base minima de Redshift Serverless es 8 RPU."
+  }
 }
 
 # --------------------------------- Cache ------------------------------------
@@ -147,18 +169,30 @@ variable "domain_name" {
   default     = "casino.example.com"
 }
 
-# -------------------------------- Logging -----------------------------------
-
-variable "elb_account_id" {
-  description = "Account ID del servicio ELB en ca-central-1 (para la politica de access logs en S3)."
-  type        = string
-  default     = "985666609251"
+variable "enable_acm_validation" {
+  description = "Activa la validacion DNS automatica del certificado ACM via Route53 (requiere zona propia)."
+  type        = bool
+  default     = false
 }
+
+variable "route53_zone_id" {
+  description = "ID de la zona Route53 donde se crean los registros de validacion del certificado ACM."
+  type        = string
+  default     = ""
+}
+
+# -------------------------------- Logging -----------------------------------
 
 variable "log_retention_days" {
   description = "Dias de retencion de los CloudWatch Log Groups."
   type        = number
   default     = 30
+}
+
+variable "alarm_email" {
+  description = "Correo que recibe las notificaciones SNS de las alarmas de CloudWatch."
+  type        = string
+  default     = ""
 }
 
 variable "enable_sns_endpoint" {

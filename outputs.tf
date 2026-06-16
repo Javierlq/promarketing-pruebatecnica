@@ -1,8 +1,3 @@
-###############################################################################
-# outputs.tf
-# Valores que Terraform imprime al final de un apply/plan. Utiles para
-# conectar modulos, pasar datos a pipelines CI/CD o documentar la infra.
-
 # --------------------------------- VPCs -------------------------------------
 
 output "vpc_principal_id" {
@@ -24,17 +19,17 @@ output "vpc_peering_id" {
 
 output "public_subnet_ids" {
   description = "IDs de las subredes publicas de la VPC principal (donde vive el ALB)."
-  value       = aws_subnet.public_principal[*].id
+  value       = [for s in aws_subnet.public_principal : s.id]
 }
 
 output "private_subnet_ids_principal" {
   description = "IDs de las subredes privadas de la VPC principal (EC2, RDS, Redis)."
-  value       = aws_subnet.private_principal[*].id
+  value       = [for s in aws_subnet.private_principal : s.id]
 }
 
 output "private_subnet_ids_data" {
   description = "IDs de las subredes privadas de la VPC de datos (Redshift)."
-  value       = aws_subnet.private_data[*].id
+  value       = [for s in aws_subnet.private_data : s.id]
 }
 
 # --------------------------------- ALB --------------------------------------
@@ -49,11 +44,16 @@ output "alb_zone_id" {
   value       = aws_lb.main.zone_id
 }
 
-# --------------------------------- EC2 --------------------------------------
+# --------------------------------- Computo ----------------------------------
 
-output "ec2_instance_ids" {
-  description = "Mapa nombre-de-app -> ID de instancia EC2."
-  value       = { for app, inst in aws_instance.app : app => inst.id }
+output "asg_names" {
+  description = "Mapa nombre-de-app -> Nombre del Auto Scaling Group."
+  value       = { for app, asg in aws_autoscaling_group.app : app => asg.name }
+}
+
+output "target_group_arns" {
+  description = "Mapa nombre-de-app -> ARN del Target Group del ALB."
+  value       = { for app, tg in aws_lb_target_group.app : app => tg.arn }
 }
 
 # --------------------------------- RDS --------------------------------------
@@ -67,15 +67,15 @@ output "rds_endpoint" {
 # -------------------------------- Redshift ----------------------------------
 
 output "redshift_endpoint" {
-  description = "Endpoint del cluster Redshift (bodega de datos historica)."
-  value       = aws_redshift_cluster.data.endpoint
+  description = "Endpoint del workgroup de Redshift Serverless (bodega de datos historica)."
+  value       = aws_redshiftserverless_workgroup.data.endpoint
   sensitive   = true
 }
 
 # --------------------------------- Redis ------------------------------------
 
 output "redis_endpoint" {
-  description = "Endpoint de conexion primario de ElastiCache Redis."
+  description = "Endpoint primario de ElastiCache Redis."
   value       = aws_elasticache_replication_group.redis.primary_endpoint_address
   sensitive   = true
 }
@@ -111,7 +111,12 @@ output "kms_key_arn" {
   value       = aws_kms_key.s3.arn
 }
 
-# ------------------------------ VPC Endpoints -------------------------------
+# ------------------------------ Secrets / Endpoints -------------------------
+
+output "db_secret_arn" {
+  description = "ARN del secreto en Secrets Manager con las credenciales de la BD."
+  value       = aws_secretsmanager_secret.db_secret.arn
+}
 
 output "vpc_endpoint_s3_id" {
   description = "ID del VPC Endpoint Gateway para S3 (trafico privado sin pasar por Internet)."

@@ -1,19 +1,11 @@
-# s3.tf
-# Dos buckets S3:
-#   1. Contenido estatico: privado, cifrado SSE-KMS, accesible solo via CloudFront OAC.
-#   2. ALB Access Logs: recibe los logs del balanceador (politica ELB obligatoria).
-
-# =============================================================================
-# BUCKET DE CONTENIDO ESTATICO
+# Bucket de contenido estatico — privado, SSE-KMS, solo CloudFront via OAC
 
 resource "aws_s3_bucket" "static" {
-  # El account_id en el nombre garantiza unicidad global del bucket.
   bucket = "s3-static-${local.name_suffix}-${data.aws_caller_identity.current.account_id}"
 
   tags = merge(local.tags, { Name = "s3-static-${local.name_suffix}" })
 }
 
-# Cifrado en reposo SSE-KMS con la clave creada en main.tf
 resource "aws_s3_bucket_server_side_encryption_configuration" "static" {
   bucket = aws_s3_bucket.static.id
 
@@ -26,7 +18,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "static" {
   }
 }
 
-# Bloquear cualquier ACL publica o acceso anonimo al bucket
 resource "aws_s3_bucket_public_access_block" "static" {
   bucket = aws_s3_bucket.static.id
 
@@ -36,7 +27,6 @@ resource "aws_s3_bucket_public_access_block" "static" {
   restrict_public_buckets = true
 }
 
-# Politica del bucket: SOLO CloudFront (via OAC con SourceArn) puede leer objetos
 resource "aws_s3_bucket_policy" "static" {
   bucket = aws_s3_bucket.static.id
 
@@ -59,7 +49,6 @@ resource "aws_s3_bucket_policy" "static" {
   })
 }
 
-# Versionado opcional: permite recuperar versiones anteriores de assets
 resource "aws_s3_bucket_versioning" "static" {
   bucket = aws_s3_bucket.static.id
 
@@ -68,9 +57,9 @@ resource "aws_s3_bucket_versioning" "static" {
   }
 }
 
-# =============================================================================
-# BUCKET DE ALB ACCESS LOGS
-# El ALB escribe sus logs de acceso aqui
+# Bucket de ALB access logs
+
+data "aws_elb_service_account" "main" {}
 
 resource "aws_s3_bucket" "alb_logs" {
   bucket = "s3-alblogs-${local.name_suffix}-${data.aws_caller_identity.current.account_id}"
@@ -87,7 +76,17 @@ resource "aws_s3_bucket_public_access_block" "alb_logs" {
   restrict_public_buckets = true
 }
 
-# Politica obligatoria para que el servicio ELB pueda escribir access logs
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
 resource "aws_s3_bucket_policy" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 
@@ -98,7 +97,7 @@ resource "aws_s3_bucket_policy" "alb_logs" {
         Sid    = "AllowELBLogDelivery"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::${var.elb_account_id}:root"
+          AWS = data.aws_elb_service_account.main.arn
         }
         Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
@@ -107,7 +106,6 @@ resource "aws_s3_bucket_policy" "alb_logs" {
   })
 }
 
-# Ciclo de vida: los logs mas antiguos de 90 dias se eliminan automaticamente
 resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 

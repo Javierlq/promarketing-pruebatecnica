@@ -1,14 +1,7 @@
-###############################################################################
-# monitoring.tf
-# Observabilidad: CloudWatch Log Groups centralizados para EC2 y aplicaciones,
-# y alarmas para errores 5xx y alta latencia en el ALB.
-# Los access logs del ALB se configuran en instances.tf (resource aws_lb).
-
-# =============================================================================
-# LOG GROUPS DE CLOUDWATCH
+# CloudWatch Log Groups
 
 resource "aws_cloudwatch_log_group" "app" {
-  for_each = toset(var.apps)
+  for_each = local.servicios_infra
 
   name              = "/casino/${each.key}"
   retention_in_days = var.log_retention_days
@@ -16,7 +9,6 @@ resource "aws_cloudwatch_log_group" "app" {
   tags = merge(local.tags, { Name = "lg-${each.key}-${local.name_suffix}" })
 }
 
-# Log group para el sistema (logs del OS / agente en las EC2)
 resource "aws_cloudwatch_log_group" "ec2_system" {
   name              = "/casino/system"
   retention_in_days = var.log_retention_days
@@ -24,7 +16,6 @@ resource "aws_cloudwatch_log_group" "ec2_system" {
   tags = merge(local.tags, { Name = "lg-system-${local.name_suffix}" })
 }
 
-# Log group para el ALB (complementa los access logs en S3)
 resource "aws_cloudwatch_log_group" "alb" {
   name              = "/casino/alb"
   retention_in_days = var.log_retention_days
@@ -32,9 +23,23 @@ resource "aws_cloudwatch_log_group" "alb" {
   tags = merge(local.tags, { Name = "lg-alb-${local.name_suffix}" })
 }
 
-# =============================================================================
-# ALARMA: errores HTTP 5xx en el ALB
-# Se dispara cuando el ALB responde con mas de 10 errores 5xx en 5 minutos.
+# SNS
+
+resource "aws_sns_topic" "alerts" {
+  name = "alerts-${local.name_suffix}"
+
+  tags = merge(local.tags, { Name = "alerts-${local.name_suffix}" })
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  for_each = toset(var.alarm_email != "" ? [var.alarm_email] : [])
+
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = each.value
+}
+
+# Alarmas
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   alarm_name          = "alarm-alb-5xx-${local.name_suffix}"
@@ -47,6 +52,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   statistic           = "Sum"
   threshold           = 10
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
     LoadBalancer = aws_lb.main.arn_suffix
@@ -54,10 +61,6 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 
   tags = merge(local.tags, { Name = "alarm-5xx-${local.name_suffix}" })
 }
-
-# =============================================================================
-# ALARMA: alta latencia en el ALB
-# Se dispara cuando el tiempo de respuesta promedio supera los 2 segundos.
 
 resource "aws_cloudwatch_metric_alarm" "alb_latency" {
   alarm_name          = "alarm-alb-latency-${local.name_suffix}"
@@ -70,6 +73,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_latency" {
   statistic           = "Average"
   threshold           = 2
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
     LoadBalancer = aws_lb.main.arn_suffix

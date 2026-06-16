@@ -1,7 +1,3 @@
-# main.tf
-# Configuracion base: proveedor AWS, datos comunes, nomenclatura (locals),
-# clave KMS para SSE-KMS y certificado ACM del ALB.
-
 terraform {
   required_version = ">= 1.5.0"
 
@@ -10,28 +6,35 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
-# Proveedor de AWS apuntando a la region del reto (ca-central-1 por defecto).
 provider "aws" {
   region = var.region
 }
 
-# Datos de la cuenta actual (se usa el account_id para nombres de bucket unicos
-# y para las politicas de IAM/KMS).
 data "aws_caller_identity" "current" {}
 
-# Lista de AZs disponibles en la region (informativo / validacion).
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 locals {
-  # Nomenclatura obligatoria del reto: recurso-proyecto-operacion-num-region
   name_suffix = "${var.proyecto}-${var.operacion}-${var.num}-${var.region_short}"
 
-  # Tags comunes que se aplican (via merge) a todos los recursos.
+  servicios_infra = {
+    frontsite  = { port = 80, path = "/*" }
+    backoffice = { port = 8080, path = "/backoffice/*" }
+    webapi     = { port = 8081, path = "/api/*" }
+    gameapi    = { port = 8082, path = "/game/*" }
+  }
+
+  private_subnet_ids = [for az in var.azs : aws_subnet.private_principal[az].id]
+
   tags = {
     Project   = var.proyecto
     Operation = var.operacion
@@ -40,7 +43,7 @@ locals {
   }
 }
 
-# Clave KMS para cifrar en reposo (SSE-KMS) el bucket S3 de contenido estatico.
+# KMS
 
 resource "aws_kms_key" "s3" {
   description             = "KMS key para SSE-KMS del bucket S3 estatico"
@@ -75,13 +78,36 @@ resource "aws_kms_key" "s3" {
   tags = merge(local.tags, { Name = "kms-s3-${local.name_suffix}" })
 }
 
-# Alias legible para la clave KMS.
 resource "aws_kms_alias" "s3" {
   name          = "alias/s3-${local.name_suffix}"
   target_key_id = aws_kms_key.s3.key_id
 }
 
-# Certificado SSL/TLS para el ALB, emitido por ACM con validacion DNS.
+# Secrets Manager — credenciales generadas con random_password
+
+resource "random_password" "db_pass" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "db_secret" {
+  name                    = "casino-db-secret-${local.name_suffix}"
+  description             = "Credenciales de RDS y Redshift del casino"
+  recovery_window_in_days = 0
+
+  tags = merge(local.tags, { Name = "secret-db-${local.name_suffix}" })
+}
+
+resource "aws_secretsmanager_secret_version" "db_secret_val" {
+  secret_id = aws_secretsmanager_secret.db_secret.id
+  secret_string = jsonencode({
+    username = var.db_username
+    password = random_password.db_pass.result
+    database = "casino_db"
+  })
+}
+
+# ACM + validacion DNS (opcional via Route53)
 
 resource "aws_acm_certificate" "alb" {
   domain_name       = var.domain_name
@@ -92,4 +118,33 @@ resource "aws_acm_certificate" "alb" {
   }
 
   tags = merge(local.tags, { Name = "acm-${local.name_suffix}" })
+}
+
+data "aws_route53_zone" "main" {
+  for_each = toset(var.enable_acm_validation ? ["main"] : [])
+  zone_id  = var.route53_zone_id
+}
+
+resource "aws_route53_record" "acm_validation" {
+  for_each = var.enable_acm_validation ? {
+    for dvo in aws_acm_certificate.alb.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  } : {}
+
+  zone_id = data.aws_route53_zone.main["main"].zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.record]
+  ttl     = 60
+
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "alb" {
+  for_each                = toset(var.enable_acm_validation ? ["main"] : [])
+  certificate_arn         = aws_acm_certificate.alb.arn
+  validation_record_fqdns = [for record in aws_route53_record.acm_validation : record.fqdn]
 }
